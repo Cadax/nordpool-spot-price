@@ -1,7 +1,9 @@
 # Nordpoolin tunnittaisen spot-hinnan ennustaminen Suomessa
 
-* Ladattu dataa: Spot-hinnat tunnin välein, lämpötilamittaukset, sähkönsiirto, sähkönkulutus, tuulivoima, ydinvoima, vesivoima, päästöoikeuksien hinnat
-* Yhdistetty yhteen dataframeen: Spot-hinnat, lämpötilamittaukset, sähkönsiirto, sähkönkulutus, tuulivoima, ydinvoima, vesivoima
+## Muuttujat
+
+* Yhdistetty yhteen dataframeen: Spot-hinnat, lämpötilamittaukset(HEL,JKL,ROV), sähkönsiirto, sähkönkulutus, tuulivoima, ydinvoima, vesivoima, kivihiilen hinta, öljyn (BRENT) hinta
+* Puuttuu: Ruotsin ydinvoima ja tuulivoima. Päästöoikeuksien hinnat.
 
 
 Ennustustuloksia:
