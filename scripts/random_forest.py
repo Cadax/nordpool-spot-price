@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.model_selection import GridSearchCV
@@ -29,6 +29,28 @@ def train_forest(combined_df):
     print(f"Test MAE: {mae}")
     print(f"Test RMSE: {rmse}")
     return forest
+
+def extra_forest(combined_df):
+    labels = combined_df.values[:,0]
+    features = combined_df.values[:,1:]
+    train_features, test_features, train_labels, test_labels = train_test_split(features,labels,test_size=0.10,shuffle=False)
+    forest = RandomForestRegressor(n_estimators=100,
+                                   min_samples_split=12,
+                                   min_samples_leaf=5,
+                                   max_features='sqrt',
+                                   max_depth=60,
+                                   bootstrap=False,
+                                   random_state=42,
+                                   n_jobs=-1,
+                                   criterion='mae')
+    forest.fit(train_features, train_labels)
+    preds = forest.predict(test_features)
+    mae = mean_absolute_error(preds,test_labels)
+    rmse = np.sqrt(mean_squared_error(preds,test_labels))
+    print(f"Test MAE: {mae}")
+    print(f"Test RMSE: {rmse}")
+    return forest
+    
 
 def random_forest_random_search(combined_df):
     random_grid = {
@@ -118,22 +140,31 @@ def creating_features(combined_df):
     combined_df.dropna(inplace=True)
     return combined_df
 
-combined_df = pd.read_pickle('data/combined_df_engineered.pickle')
-combined_df = creating_features(combined_df)
-#combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop one hot encoded days etc
-print(combined_df.columns)
-feature_names = combined_df.drop('Spot',axis=1).columns
-forest = train_forest(combined_df)
+def predict_forest(forest,dataset):
+    labels = dataset.values[:,0]
+    features = dataset.values[:,1:]
+    predictions = forest.predict(features)
+    mae = mean_absolute_error(predictions,labels)
+    return predictions, labels
 
-#random_forest_random_search(combined_df)
-#random_forest_grid_search(combined_df)
-#best_params = np.load('rf_grid_search_best_params.npy').item()
-#print(best_params)
-#print("-------")
-#results = np.load('rf_grid_search_results.npy').item()
-#print(results)
 
-joblib.dump(forest,'models/random_forest10.sav')
-#forest = joblib.load('models/random_forest5.sav')
+if __name__ == '__main__':
+    combined_df = pd.read_pickle('data/combined_df_engineered.pickle')
+    combined_df = creating_features(combined_df)
+    combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop one hot encoded days etc
+    print(combined_df.columns)
+    feature_names = combined_df.drop('Spot',axis=1).columns
+    #forest = train_forest(combined_df)
+    forest = extra_forest(combined_df)
+    #random_forest_random_search(combined_df)
+    #random_forest_grid_search(combined_df)
+    #best_params = np.load('rf_grid_search_best_params.npy').item()
+    #print(best_params)
+    #print("-------")
+    #results = np.load('rf_grid_search_results.npy').item()
+    #print(results)
 
-list_importances(forest,feature_names)
+    joblib.dump(forest,'models/extra_forest1.sav')
+    #forest = joblib.load('models/random_forest5.sav')
+
+    list_importances(forest,feature_names)
