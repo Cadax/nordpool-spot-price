@@ -107,13 +107,15 @@ def build_model(train_X,train_y,params):
     model = Sequential()
     model.add(CuDNNLSTM(params['first_neurons'],input_shape=(timesteps,features)))
     model.add(RepeatVector(outputs))
-    model.add(CuDNNLSTM(params['second_neurons']))
+
     # two extra layers
+    model.add(CuDNNLSTM(params['first_neurons']))
     model.add(RepeatVector(outputs))
-    model.add(CuDNNLSTM(params['second_neurons']))
+    model.add(CuDNNLSTM(params['first_neurons']))
     model.add(RepeatVector(outputs))
+    # two extra layers
+
     model.add(CuDNNLSTM(params['second_neurons'],return_sequences=True))
-    # two extra layers
     model.add(TimeDistributed(Dense(params['dense_neurons'],activation='relu')))
     model.add(TimeDistributed(Dense(1)))
     model.compile(loss='mse', optimizer=params['optimizer'])
@@ -239,46 +241,114 @@ def model_results(model,train,test,sequence_len,scaler):
     return rmse,mae
     
 if __name__ == '__main__':
-    combined_df = pd.read_pickle('data/combined_df_engineered.pickle')
-    combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop onehot encoded values
-    combined_df.drop(columns=['Day','FI-SE3','FI-SE1','FI-NO','Consumption','yhat_lower','trend','^N100 Close','^OMXSPI Close','FORTUM Close','^OMXH25 Close','Hydro Reservoir FI','Wind Power Production FI','Rovaniemi Temperature','Jyvaskyla Temperature','Helsinki Temperature'],inplace=True) #drop features with low importance score
-    print(combined_df.columns)
-    sequence_len = 24*3 # sequence length, week is 24 hours * 7 
+
     #hours_in, hours_out = 24,24
-    train_X, train_y, test, train, scaler = prepare_data(sequence_len,combined_df)
     #lr = 0.001
     #opt = Adam(lr=lr)
 
     params_list = list()
     params_list.append({
-        'first_neurons' : 30,
-        'second_neurons' : 30,
-        'dense_neurons' : 15,
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
         'lr' : 0.001,
         'optimizer' : Adam(lr=0.001),
         'epochs' : 30,
-        'batch_size' : 1
+        'batch_size' : 4,
+        'sequence_len' : 24
     })
     params_list.append({
-        'first_neurons' : 60,
-        'second_neurons' : 60,
-        'dense_neurons' : 30,
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
         'lr' : 0.001,
         'optimizer' : Adam(lr=0.001),
         'epochs' : 30,
-        'batch_size' : 8
+        'batch_size' : 4,
+        'sequence_len' : 24*2
     })
     params_list.append({
-        'first_neurons' : 500,
-        'second_neurons' : 500,
-        'dense_neurons' : 250,
-        'lr' : 0.0001,
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
+        'lr' : 0.001,
         'optimizer' : Adam(lr=0.0001),
-        'epochs' : 50,
-        'batch_size' : 16
+        'epochs' : 30,
+        'batch_size' : 4,
+        'sequence_len' : 24*3
+    })
+    params_list.append({
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
+        'lr' : 0.001,
+        'optimizer' : Adam(lr=0.0001),
+        'epochs' : 30,
+        'batch_size' : 4,
+        'sequence_len' : 24*4
+    })
+    params_list.append({
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
+        'lr' : 0.001,
+        'optimizer' : Adam(lr=0.0001),
+        'epochs' : 30,
+        'batch_size' : 4,
+        'sequence_len' : 24*5
+    })
+
+    params_list.append({
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
+        'lr' : 0.001,
+        'optimizer' : Adam(lr=0.0001),
+        'epochs' : 30,
+        'batch_size' : 4,
+        'sequence_len' : 24*6
+    })
+    params_list.append({
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
+        'lr' : 0.001,
+        'optimizer' : Adam(lr=0.0001),
+        'epochs' : 30,
+        'batch_size' : 4,
+        'sequence_len' : 24*7
+    })
+    params_list.append({
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
+        'lr' : 0.001,
+        'optimizer' : Adam(lr=0.0001),
+        'epochs' : 30,
+        'batch_size' : 4,
+        'sequence_len' : 24*14
+    })
+    params_list.append({
+        'first_neurons' : 50,
+        'second_neurons' : 50,
+        'dense_neurons' : 25,
+        'lr' : 0.001,
+        'optimizer' : Adam(lr=0.0001),
+        'epochs' : 30,
+        'batch_size' : 4,
+        'sequence_len' : 24*30
     })
 
     for params in params_list:
+        combined_df = pd.read_pickle('data/combined_df_engineered_T-24.pickle')
+        #combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop onehot encoded values
+        #combined_df.drop(columns=['Day','FI-SE3','FI-SE1','FI-NO','Consumption','yhat_lower','trend','^N100 Close','^OMXSPI Close','FORTUM Close','^OMXH25 Close','Hydro Reservoir FI','Wind Power Production FI','Rovaniemi Temperature','Jyvaskyla Temperature','Helsinki Temperature'],inplace=True) #drop features with low importance score
+        sequence_len = params['sequence_len'] # sequence length, week is 24 hours * 7 
+        columns_to_drop = [x for x in combined_df.columns if 'Spot' and 'T-' in x and int(x.split('-')[1]) < sequence_len]
+        combined_df.drop(columns=columns_to_drop,inplace=True)
+        print(combined_df.columns)
+        train_X, train_y, test, train, scaler = prepare_data(sequence_len,combined_df)
+
         model = build_model(train_X, train_y,params)
         model_path = f"models/LSTM_encoder_decoder_sequence{sequence_len}-{int(time.time())}.h5"
         model.save(model_path)

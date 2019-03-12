@@ -149,13 +149,13 @@ def predict_forest(forest,dataset):
 
 
 if __name__ == '__main__':
-    combined_df = pd.read_pickle('data/combined_df_engineered.pickle')
-    combined_df = creating_features(combined_df)
-    combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop one hot encoded days etc
+    combined_df = pd.read_pickle('data/combined_df_engineered_T-24.pickle')
+    #combined_df = creating_features(combined_df)
+    #combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop one hot encoded days etc
     print(combined_df.columns)
     feature_names = combined_df.drop('Spot',axis=1).columns
-    #forest = train_forest(combined_df)
-    forest = extra_forest(combined_df)
+    forest = train_forest(combined_df)
+    #forest = extra_forest(combined_df)
     #random_forest_random_search(combined_df)
     #random_forest_grid_search(combined_df)
     #best_params = np.load('rf_grid_search_best_params.npy').item()
