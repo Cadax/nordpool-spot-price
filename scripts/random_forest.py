@@ -9,6 +9,7 @@ from sklearn.externals import joblib
 import json
 import fbprophet
 
+
 def train_forest(combined_df):
     labels = combined_df.values[:,0]
     features = combined_df.values[:,1:]
@@ -108,6 +109,25 @@ def list_importances(forest,feature_names):
     feature_importances = sorted(feature_importances, key=lambda x: x[1], reverse = True)
     [print('Variable: {:20} Importance: {}'.format(*pair)) for pair in feature_importances]
 
+def list_permutation_importances(forest,test):
+    from rfpimp import importances
+    import matplotlib.pyplot as plt
+
+    test = test[-168*4:]
+    permutative_importances = importances(forest,test.drop(columns=['Spot']),test['Spot'])
+    #fig, ax = plt.subplots()
+    ax = permutative_importances.plot.barh()
+    plt.show(ax)
+    """
+    print(permutative_importances)
+    fig, ax = plt.subplots()
+    y_pos = np.arange(len(permutative_importances))
+    ax.barh(y_pos, permutative_importances['Importance'],align='center',color='green')
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(permutative_importances['Feature'])
+    ax.
+    """
+
 def creating_features(combined_df):
     """
     combined_df.drop(columns=['Spot MA','Spot STD','Spot T-168','Spot T-8760','Spot Rolling Min', 'Spot Rolling Max'],inplace=True)
@@ -149,7 +169,12 @@ def predict_forest(forest,dataset):
 
 
 if __name__ == '__main__':
-    combined_df = pd.read_pickle('data/combined_df_engineered_T-24.pickle')
+    #combined_df = pd.read_pickle('data/combined_df_engineered_T-24.pickle')
+
+    #combined_df = pd.read_pickle('data/combined_df_stripped_swe3_1718_residual.pickle')
+    combined_df = pd.read_pickle('data/combined_df_residuals_swe2.pickle')
+    #combined_df = combined_df['2018']
+
     #combined_df = creating_features(combined_df)
     #combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop one hot encoded days etc
     print(combined_df.columns)
@@ -164,7 +189,8 @@ if __name__ == '__main__':
     #results = np.load('rf_grid_search_results.npy').item()
     #print(results)
 
-    joblib.dump(forest,'models/extra_forest1.sav')
-    #forest = joblib.load('models/random_forest5.sav')
-
-    list_importances(forest,feature_names)
+    joblib.dump(forest,'models/random_forest/random_forest_resid_swe1.sav')
+    #forest = joblib.load('models/random_forest10.sav')
+    
+    #list_importances(forest,feature_names)
+    list_permutation_importances(forest,combined_df)

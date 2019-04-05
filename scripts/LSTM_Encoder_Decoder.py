@@ -15,21 +15,13 @@ from tensorflow.python.keras.layers.advanced_activations import *
 from attention import Attention
 import matplotlib.pyplot as plt
 import time
-"""
-from attention2 import Attention
-import os
-import tensorflow as tf
-from keras_preprocessing import sequence
-from tensorflow import keras
-from tensorflow.python.keras import Input
-from tensorflow.python.keras.layers import Concatenate
-"""
+
 import talos as ta
 import argparse
 
 
-def mean_absolute_percentage_error(x,y):
-    return np.mean(np.abs((x - y) / x)) * 100
+def mean_absolute_percentage_error(true,pred):
+    return np.mean(np.abs((np.array(true) - np.array(pred)) / np.array(true))) * 100
 
 def build_model_attention(train_X, train_y,params):
     timesteps, features, outputs = train_X.shape[1], train_X.shape[2], train_y.shape[1]
@@ -39,7 +31,7 @@ def build_model_attention(train_X, train_y,params):
     model.add(AttentionDecoder(150, features))
     model.compile(loss='mape', optimizer=Adam(lr=1e-5), metrics=['mse','mae','mape'])
     tensorboard = TensorBoard(log_dir=f"./logs/{int(time.time())}",histogram_freq=0,write_graph=True,write_images=False)
-    early_stopping = EarlyStopping(monitor='val_mean_absolute_percentage_error',mode='min',patience=10)
+    early_stopping = EarlyStopping(monitor='val_mean_absolute_percentage_error',mode='min',patience=15)
     checkpoint_name = f'{int(time.time())}.h5'
     model_checkpoint = ModelCheckpoint(f'./checkpoints/{int(time.time())}.h5',monitor='val_mean_absolute_percentage_error',mode='min',save_best_only=True,verbose=1)
     model.fit(train_X, 
@@ -80,11 +72,11 @@ def prepare_data(sequence_len,dataset):
     norm_values = norm_values[:rows_to_include]
     norm_values_weeklyseq = np.array(np.split(norm_values,len(norm_values)/sequence_len))
     # to weekly sequence
-    train = norm_values_weeklyseq[:len(norm_values_weeklyseq)-30]
-    test = norm_values_weeklyseq[len(norm_values_weeklyseq)-30:]
+    #train = norm_values_weeklyseq[:len(norm_values_weeklyseq)-30]
+    #test = norm_values_weeklyseq[len(norm_values_weeklyseq)-30:]
     train_X, train_y = list(),list()
     # to sequence
-    data = train.reshape((train.shape[0]*train.shape[1], train.shape[2]))
+    data = norm_values_weeklyseq.reshape((norm_values_weeklyseq.shape[0]*norm_values_weeklyseq.shape[1], norm_values_weeklyseq.shape[2]))
     in_start = 0
     for _ in range(len(data)):
         in_end = in_start + sequence_len
@@ -93,10 +85,10 @@ def prepare_data(sequence_len,dataset):
             train_X.append(data[in_start:in_end,:])
             train_y.append(data[in_end:out_end,0])
         in_start += 1
-    return np.array(train_X), np.array(train_y), test, train, scaler
+    return np.array(train_X), np.array(train_y), scaler
 
 def make_test(dataset,model_name,sequence_len):
-    #dates = dataset.index #remember datetimes from index
+    dates = dataset.index #remember datetimes from index
     values = dataset.values
     variables = values.shape[1] 
     labelenc = LabelEncoder()
@@ -109,8 +101,10 @@ def make_test(dataset,model_name,sequence_len):
     norm_values = norm_values[:rows_to_include]
     norm_values_weeklyseq = np.array(np.split(norm_values,len(norm_values)/sequence_len))
     # to weekly sequence
-    test = norm_values_weeklyseq[:int(len(norm_values_weeklyseq)/2)]
-    actual = norm_values_weeklyseq[int(len(norm_values_weeklyseq)/2):]
+    #test = norm_values_weeklyseq[:int(len(norm_values_weeklyseq)/2)]
+    #actual = norm_values_weeklyseq[int(len(norm_values_weeklyseq)/2):]
+    test = norm_values_weeklyseq
+    actual = norm_values_weeklyseq
     #actual = test_y[:,:,0]
     model = load_model(f'../scripts/models/{model_name}')
 
@@ -123,6 +117,7 @@ def make_test(dataset,model_name,sequence_len):
         real_prediction = scaler.inverse_transform(real_prediction)
         predictions.append(real_prediction[:,0])
         history.append(actual[i,:])
+
     predictions = np.array(predictions)
     # calculate loss
     actuals = list()
@@ -136,22 +131,24 @@ def make_test(dataset,model_name,sequence_len):
         actuals.append(act[:,0])
     actuals = np.array(actuals)
     test_result_df = pd.DataFrame(columns=['Actuals','Predictions'])
+
     actuals = actuals.reshape((actuals.shape[0]*actuals.shape[1]))
     predictions = predictions.reshape((predictions.shape[0]*predictions.shape[1]))
     test_result_df['Actuals'] = actuals
     test_result_df['Predictions'] = predictions
-    #print(test_result_df.describe())
-    print(test_result_df.head(10))
-    print(test_result_df.tail(10))
-    #print(len(test_result_df.index))
-    #test_result_df.set_index(dates,inplace=True)
-    test_result_df.to_csv('../scripts/test_results/result.csv',index=True)
+    if len(actuals) < len(dates):
+        dates = dates[:len(actuals)]
+    test_result_df.set_index(dates,inplace=True)
+    test_result_df.to_csv(f'../scripts/test_results/{model_name}_results.csv',index=True,index_label='Date')
     return test_result_df
 
 def build_model(train_X,train_y,params):
     reg = L1L2(l1=0.01,l2=0.01)
+    train_X, val_X = train_X[:-(24*10*7)], train_X[-(24*10*7):] # validation set same as test dataset that is defined later
+    train_y, val_y = train_y[:-(24*10*7)], train_y[-(24*10*7):]
     timesteps, features, outputs = train_X.shape[1], train_X.shape[2], train_y.shape[1]
     train_y = train_y.reshape((train_y.shape[0],train_y.shape[1],1))
+    val_y = val_y.reshape((val_y.shape[0],val_y.shape[1],1))
 
     model = Sequential()
     model.add(CuDNNLSTM(params['first_neurons'],input_shape=(timesteps,features)))
@@ -172,7 +169,7 @@ def build_model(train_X,train_y,params):
     model.add(TimeDistributed(Dense(1)))
     model.compile(loss='mse', optimizer=params['optimizer'], metrics=['mse','mae','mape'])
     tensorboard = TensorBoard(log_dir=f"./logs/{int(time.time())}",histogram_freq=0,write_graph=True,write_images=False)
-    early_stopping = EarlyStopping(monitor='val_mean_absolute_percentage_error',mode='min',patience=10)
+    early_stopping = EarlyStopping(monitor='val_mean_absolute_percentage_error',mode='min',patience=15)
     checkpoint_name = f'{int(time.time())}.h5'
     model_checkpoint = ModelCheckpoint(f'./checkpoints/{checkpoint_name}',monitor='val_mean_absolute_percentage_error',mode='min',save_best_only=True,verbose=1)
     model.fit(train_X, 
@@ -181,15 +178,20 @@ def build_model(train_X,train_y,params):
               batch_size=params['batch_size'], 
               verbose=1,
               shuffle=False,
-              validation_split=0.1,
+              validation_data=(val_X,val_y),
+              #validation_split=0.1,
               callbacks=[tensorboard,early_stopping,model_checkpoint]
               )
     return model, checkpoint_name
 
 def build_model_cnnlstm(train_X,train_y,params):
     reg = L1L2(l1=0.01,l2=0.01)
+    train_X, val_X = train_X[:-(24*10*7)], train_X[-(24*10*7):] # validation set same as test dataset that is defined later
+    train_y, val_y = train_y[:-(24*10*7)], train_y[-(24*10*7):]
     timesteps, features, outputs = train_X.shape[1], train_X.shape[2], train_y.shape[1]
     train_y = train_y.reshape((train_y.shape[0],train_y.shape[1],1))
+    val_y = val_y.reshape((val_y.shape[0],val_y.shape[1],1))
+
 
     model = Sequential()
     model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(timesteps,features)))
@@ -212,7 +214,7 @@ def build_model_cnnlstm(train_X,train_y,params):
               batch_size=params['batch_size'], 
               verbose=1,
               shuffle=False,
-              validation_split=0.1,
+              validation_data=(val_X,val_y),
               callbacks=[tensorboard,early_stopping,model_checkpoint]
               )
     return model, checkpoint_name
@@ -473,7 +475,7 @@ def continue_training(model_name):
 def temp_test():
     model_name = '1553780180.h5'
     sequence_len = 24
-    dataset = pd.read_pickle('combined_df_stripped_swe3_residual.pickle')
+    dataset = pd.read_pickle('../notebooks/combined_df_stripped_swe3_residual.pickle')
 
     # print error results from test data
     test_df = dataset[-(24*10*7):]
@@ -572,62 +574,61 @@ def main(dataset,plot):
 """
 
     params_list.append({
-    'first_neurons' : 500,
-    'second_neurons' : 500,
-    'dense_neurons' : 250,
+    'first_neurons' : 50,
+    'second_neurons' : 50,
+    'dense_neurons' : 25,
     'lr' : 1e-3,
-    'optimizer' : Adadelta(lr=1e-3, rho=0.95, epsilon=1e-08, decay=0.0),
+    'optimizer' : Adam(lr=1e-3),
     'epochs' : 200,
-    'batch_size' : 24,
+    'batch_size' : 8,
     'sequence_len' : 24
     })
 
     params_list.append({
-    'first_neurons' : 500,
-    'second_neurons' : 500,
-    'dense_neurons' : 250,
+    'first_neurons' : 50,
+    'second_neurons' : 50,
+    'dense_neurons' : 25,
     'lr' : 1e-3,
-    'optimizer' : Adadelta(lr=1e-3, rho=0.95, epsilon=1e-08, decay=0.0),
+    'optimizer' : Adam(lr=1e-3),
     'epochs' : 200,
-    'batch_size' : 24*2,
+    'batch_size' : 12,
+    'sequence_len' : 24
+    })
+
+    params_list.append({
+    'first_neurons' : 50,
+    'second_neurons' : 50,
+    'dense_neurons' : 25,
+    'lr' : 1e-3,
+    'optimizer' : Adam(lr=1e-3),
+    'epochs' : 200,
+    'batch_size' : 4,
+    'sequence_len' : 24
+    })
+
+    """
+    params_list.append({
+    'first_neurons' : 100,
+    'second_neurons' : 100,
+    'dense_neurons' : 50,
+    'lr' : 1e-3,
+    'optimizer' : Adam(lr=1e-3),
+    'epochs' : 200,
+    'batch_size' : 4,
     'sequence_len' : 24*2
     })
 
     params_list.append({
-    'first_neurons' : 500,
-    'second_neurons' : 500,
-    'dense_neurons' : 250,
+    'first_neurons' : 100,
+    'second_neurons' : 100,
+    'dense_neurons' : 50,
     'lr' : 1e-3,
-    'optimizer' : Adadelta(lr=1e-3, rho=0.95, epsilon=1e-08, decay=0.0),
+    'optimizer' : Adam(lr=1e-3),
     'epochs' : 200,
-    'batch_size' : 24*3,
+    'batch_size' : 4,
     'sequence_len' : 24*3
     })
-
-    params_list.append({
-    'first_neurons' : 500,
-    'second_neurons' : 500,
-    'dense_neurons' : 250,
-    'lr' : 1e-3,
-    'optimizer' : Adadelta(lr=1e-3, rho=0.95, epsilon=1e-08, decay=0.0),
-    'epochs' : 200,
-    'batch_size' : 24*4,
-    'sequence_len' : 24*4
-    })
-
-    params_list.append({
-    'first_neurons' : 500,
-    'second_neurons' : 500,
-    'dense_neurons' : 250,
-    'lr' : 1e-3,
-    'optimizer' : Adadelta(lr=1e-3, rho=0.95, epsilon=1e-08, decay=0.0),
-    'epochs' : 200,
-    'batch_size' : 24*5,
-    'sequence_len' : 24*5
-    })
-
-
-
+"""
     """
     params = {
         'first_neurons' : [50,100,200],
@@ -652,18 +653,17 @@ def main(dataset,plot):
         sequence_len = params['sequence_len'] # sequence length, week is 24 hours * 7 
         columns_to_drop = [x for x in combined_df.columns if 'Spot' and 'T-' in x and int(x.split('-')[1]) < sequence_len]
         combined_df.drop(columns=columns_to_drop,inplace=True)
-        print(combined_df.columns)
-        train_X, train_y, test, train, scaler = prepare_data(sequence_len,combined_df)
+        print(f"Features in dataset: {len(combined_df.columns)-1}")
+        train_X,train_y,scaler = prepare_data(sequence_len,combined_df)
 
         #model,checkpoint_name = build_model(train_X, train_y,params)
-        #model,checkpoint_name = build_model_lstmfcn(train_X,train_y)
-        
         model,checkpoint_name = build_model_cnnlstm(train_X,train_y,params)
+        
+        #model,checkpoint_name = build_model_lstmfcn(train_X,train_y)
         #model,checkpoint_name = build_model_attn(train_X,train_y,params)
-
         #model,checkpoint_name = build_model_convlstm(train_X,train_y,params)
 
-        model_path = f"models/LSTM_encdecCNNLSTM_lossMSE_dataset{dataset}_sequence{sequence_len}-{int(time.time())}.h5"
+        model_path = f"models/LSTM_encdec_lossMSE_dataset{dataset}_sequence{sequence_len}-{int(time.time())}.h5"
         model.save(model_path)
         model_name = model_path.split('/')[1]
         #model = load_model('models/LSTM_encoder_decoder_sequence168.h5')
@@ -716,6 +716,10 @@ if __name__ == '__main__':
         continue_training(args.model_name)
     else:
         #main(args.dataset,args.plot)
-        #main('combined_df_stripped.pickle',args.plot)
+        main(args.dataset,args.plot)
         #main('combined_df_stripped_swe3_residual.pickle',args.plot)
-        temp_test()
+        #main('combined_df_residuals_swe3.pickle',args.plot)
+        #main('combined_df_residuals_swe3_T-72.pickle',args.plot)
+        #main('combined_df_residuals_swe3_T-96.pickle',args.plot)
+
+        #temp_test()
