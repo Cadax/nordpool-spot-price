@@ -1,0 +1,388 @@
+# https://machinelearningmastery.com/stacking-ensemble-for-deep-learning-neural-networks/
+from tensorflow.python.keras.models import load_model, Sequential
+from tensorflow.python.keras.layers import Dense
+from tensorflow.python.keras.optimizers import Adam, SGD
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.model_selection import GridSearchCV,StratifiedKFold,RandomizedSearchCV
+import fbprophet
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+import LSTM_Encoder_Decoder
+from statsmodels.tsa.ar_model import AR
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from pyramid.arima import auto_arima
+
+import argparse
+import xgboost
+import os
+from sklearn.ensemble import RandomForestRegressor
+
+
+def ar_forecast(history,sequence_len):
+    history = np.array(history)
+    model = AR(history).fit()
+    yhat = model.predict(len(history),len(history)+(sequence_len-1))
+    return list(yhat)
+
+def holt_winters_forecast(history,sequence_len):
+    history = np.array(history)
+    model = ExponentialSmoothing(history, seasonal='add', seasonal_periods=sequence_len).fit()
+    yhat = model.predict(len(history),len(history)+sequence_len-1)
+    return list(yhat)
+
+def xgboost_forecast(history,sequence_len):
+    history = np.array(history)
+    model = xgboost.XGBRegressor(objective='reg:linear',colsample_bytree=0.7,learning_rate=0.1,max_depth=2,alpha=10,n_estimators=50,subsample=0.9)
+    model.fit(history).fit()
+    yhat = model.predict(len(history),len(history)+sequence_len-1)
+    return list(yhat)
+
+def ar_prediction(train,test,sequence_len):
+    #combined_df = pd.read_pickle('combined_df_engineered_T-24.pickle')
+    #test_data = pd.read_pickle('test_df.pickle') # January 2019 test data
+    #train = pd.DataFrame(data=combined_df['Spot']['2018'].values,index=combined_df['2018'].index)
+    train = train['Spot']
+    test = test['Spot']
+    #test = pd.DataFrame(data=test_data['FI'].values,index=test_data.index)
+    # training data 2018
+    predictions_ar = list()
+    history_ar = [x for x in train]
+    hour_counter = sequence_len - 1 # 24-1 to prevent index out of bounds
+    for i in tqdm(range(int(len(test)/sequence_len))):
+        yhat_list = ar_forecast(history_ar,sequence_len)
+        for yhat in yhat_list:
+            predictions_ar.append(yhat)
+        for x in range(hour_counter-sequence_len,hour_counter):
+            history_ar.append(test.iloc[x])
+        #history.append(test[hour_counter] for hour_counter in range(hour_counter,hour_counter+24))
+        hour_counter += sequence_len # 24 hour timestep
+    return np.array(predictions_ar)
+
+def prophet_prediction(train,test):
+    train = train['Spot']
+    test = test['Spot']
+    train = train['2018']
+    spot = pd.DataFrame(columns=['ds','y'])
+    spot['y'] = train
+    spot['ds'] = train.index
+    spot.index = pd.RangeIndex(len(spot.index))
+    scale = 0.001
+    prophet = fbprophet.Prophet(changepoint_prior_scale=scale)
+    prophet.fit(spot)
+    forecast = prophet.make_future_dataframe(periods=len(test),freq='H')
+    forecast = prophet.predict(forecast)
+    forecast.set_index(['ds'],inplace=True)
+    forecast = forecast[-(24*10*7):]
+    return forecast['yhat'].values
+
+def xgboost_prediction(train,test,sequence_len):
+    train = train
+    test = test['Spot']
+    #test = pd.DataFrame(data=test_data['FI'].values,index=test_data.index)
+    # training data 2018
+    predictions_xg = list()
+    history_xg = [x for x in train]
+    hour_counter = sequence_len - 1 # 24-1 to prevent index out of bounds
+    for i in tqdm(range(int(len(test)/sequence_len))):
+        print(history_xg)
+        yhat_list = xgboost_forecast(history_xg,sequence_len)
+        for yhat in yhat_list:
+            predictions_xg.append(yhat)
+        for x in range(hour_counter-sequence_len,hour_counter):
+            history_xg.append(test.iloc[x])
+        #history.append(test[hour_counter] for hour_counter in range(hour_counter,hour_counter+24))
+        hour_counter += sequence_len # 24 hour timestep
+    return np.array(predictions_ar)
+
+def hw_prediction(train,test,sequence_len):
+    predictions_hw = list()
+    train = train['2018']
+    history_hw = [x for x in train.iloc[:,0]]
+    hour_counter = sequence_len - 1 # 24-1 to prevent index out of bounds
+    for i in tqdm(range(int(len(test)/sequence_len))):
+        yhat_list = holt_winters_forecast(history_hw,sequence_len)
+        for yhat in yhat_list:
+            predictions_hw.append(yhat)
+        for x in range(hour_counter-sequence_len,hour_counter):
+            history_hw.append(test.iloc[x,0])
+        #history.append(test[hour_counter] for hour_counter in range(hour_counter,hour_counter+24))
+        hour_counter += sequence_len # 24 hour timestep
+    return np.array(predictions_hw)
+
+def sarimax_prediction(train,test):
+    df = train['2018-06':]
+    df = df.asfreq(freq='H')
+    test_df = test.asfreq(freq='H')
+    df.drop(columns=df.columns[1:],inplace=True)
+    sarima = SARIMAX(df,order=(7,1,7),seasonal_order=(7,1,7,24),enforce_stationarity=False,enforce_invertibility=False,freq='H').fit()
+    pred = sarima.predict(test.index[0],test.index[-1])
+    return pred
+
+def autoarima_prediction(train,test):
+    train = train['2018']
+    train = train['Spot']
+    model = auto_arima(train,start_p=1,start_q=1,start_P=1,start_Q=1,max_q=2,max_p=2,m=12,d=1,D=1,stationary=False,seasonal=True,n_jobs=-1)
+    print(model.aic())
+    model.fit(train)
+    forecast = model.predict(n_periods=len(test))
+    return forecast
+
+
+# create a dataset out of other model's predictions
+def create_dataset(model_names):
+    stack = None
+    for model_name in model_names:
+        dataset_name = model_name.split('dataset')[1].split('pickle')[0] + "pickle"
+        model = load_model(f"models/{model_name}")
+        dataset = pd.read_pickle(f'data/{dataset_name}')
+        dataset = dataset[-(24*10*7):]
+        predictions_lstm = make_prediction(dataset,model,24)
+        print(predictions.shape)
+        if stack is None:
+            stack = predictions
+        else:
+            stack = np.dstack((stack,predictions))
+        print(stack.shape)
+    stack = stack.reshape((stack.shape[0], stack.shape[1]*stack_shape[2]))
+    return stack
+
+
+def lstm_prediction(test_dataset,model,sequence_len):
+    #dates = dataset.index #remember datetimes from index
+    values = test_dataset.values
+    variables = values.shape[1]
+    labelenc = LabelEncoder()
+    values[:,variables-1] = labelenc.fit_transform(values[:,variables-1])
+    values = values.astype('float64')
+    scaler = MinMaxScaler(feature_range=(-1,1))
+    norm_values = scaler.fit_transform(values)
+    weeks = int(len(norm_values)/sequence_len)
+    rows_to_include = weeks*sequence_len
+    norm_values = norm_values[:rows_to_include]
+    norm_values_weeklyseq = np.array(np.split(norm_values,len(norm_values)/sequence_len))
+    # to weekly sequence
+    test = norm_values_weeklyseq
+    actual = norm_values_weeklyseq
+
+    history = [x for x in test]
+    predictions = list()
+    for i in range(len(actual)):
+        yhat_seq = LSTM_Encoder_Decoder.make_prediction(model,history,sequence_len)
+        zeros = np.zeros((yhat_seq.shape[0],test.shape[2] - 1)) # train.shape[2] is number of features
+        real_prediction = np.concatenate([yhat_seq,zeros],axis=1)
+        real_prediction = scaler.inverse_transform(real_prediction)
+        predictions.append(real_prediction[:,0])
+        history.append(actual[i,:])
+    predictions = np.array(predictions)
+    predictions = predictions.reshape((predictions.shape[0]*predictions.shape[1]))
+    del model
+    return predictions
+
+def mean_of_predictions(test,predictions,filename):
+    preds = np.array(predictions)
+    mean = preds.mean(axis=1)
+    result_df = pd.DataFrame(index=test.index)
+    result_df['Actuals'] = test['Spot']
+    result_df['Predictions'] = mean
+    result_df.to_csv(f'ensemble_learning_models/test_results/{filename}',index_label='Date')
+
+def median_of_predictions(test,predictions,filename):
+    preds = np.array(predictions)
+    median = np.median(preds,axis=1)
+    result_df = pd.DataFrame(index=test.index)
+    result_df['Actuals'] = test['Spot']
+    result_df['Predictions'] = median
+    result_df.to_csv(f'ensemble_learning_models/test_results/{filename}',index_label='Date')
+
+
+
+
+def grid_search_xgboost(X,y):
+    params = {
+        'objective' : ['reg:linear'],
+        'n_estimators' : np.linspace(5,200,40,dtype=int),
+        'learning_rate' : [0.01,0.05,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1],
+        'min_child_weight': [1, 3, 5, 7, 9],
+        'subsample': [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0],
+        'colsample_bytree': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'silent': [1],
+        'max_depth': [2, 3, 4, 5, 6, 7]
+    }
+    """
+    fit_params = {
+        "eval_metric": "mae",
+        "eval_set" : [[test_X,test_y['Spot'].values]]
+    }
+    """
+
+    #kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=7)
+    xgbregressor = xgboost.XGBRegressor()
+    grid_search = RandomizedSearchCV(xgbregressor,params,scoring='r2',n_jobs=-1,verbose=1,cv=2,n_iter=200000)
+    print(X.values.shape)
+    print(y.shape)
+    y = y.values.reshape((y.shape[0],1))
+    print(y.shape)
+    grid_search.fit(X.values,y,verbose=False)
+    print(grid_search.best_score_)
+    print(grid_search.best_params_)
+
+def xgboost_metalearner(test,predictions,filename):
+    train_X, train_y = predictions[:int(len(predictions)/2)], test[:int(len(test)/2)]
+    test_X, test_y = predictions[-int(len(predictions)/2):], test[-int(len(test)/2):]
+    
+    test = test[-int(len(test)/2):]
+    #grid_search_xgboost(test.drop(columns=['Spot']),test['Spot'])
+    #grid_search_xgboost(train_X,train_y['Spot'])
+
+    xgbregressor = xgboost.XGBRegressor(objective='reg:linear',
+                                       min_child_weight=9,
+                                       colsample_bytree=0.7,
+                                       learning_rate=0.61,
+                                       max_depth=2,
+                                       subsample=0.5,
+                                       n_estimators=5
+                                       )
+    xgbregressor.fit(train_X,train_y['Spot'])
+    result_df = pd.DataFrame(index=test.index)
+    result_df['Actuals'] = test_y['Spot']
+    result_df['Predictions'] = xgbregressor.predict(test_X)
+    result_df.to_csv(f'ensemble_learning_models/test_results/{filename}',index_label='Date')
+
+def grid_search_random_forest(train_X,train_y):
+    params = { 
+    'n_estimators': np.linspace(100,1000,11,dtype=int),
+    'min_samples_split': np.linspace(2,16,9,dtype=int),
+    'min_samples_leaf' : np.linspace(1,10,10,dtype=int),
+    'max_features' : ['auto','sqrt'],
+    'max_depth' : np.linspace(10,100,11,dtype=int),
+    'bootstrap' : [True,False],
+    'n_jobs' : [-1]
+    }
+    forest = RandomForestRegressor()
+    grid_search = RandomizedSearchCV(forest,params,scoring='r2',n_jobs=-1,verbose=1,cv=2,n_iter=1000)
+    grid_search.fit(train_X,train_y)
+    print(grid_search.best_score_)
+    print(grid_search.best_params_)
+
+
+def random_forest_metalearner(test,predictions,filename):
+    train_X, train_y = predictions[:int(len(predictions)/2)], test[:int(len(test)/2)]
+    test_X, test_y = predictions[-int(len(predictions)/2):], test[-int(len(test)/2):]
+    #grid_search_random_forest(train_X,train_y)
+
+    forest = RandomForestRegressor(n_estimators=460,
+                                   min_samples_split=2,
+                                   min_samples_leaf=1,
+                                   max_features='sqrt',
+                                   max_depth=19,
+                                   bootstrap=True,
+                                   random_state=42,
+                                   n_jobs=-1)
+    forest.fit(train_X, train_y['Spot'])
+    result_df = pd.DataFrame(index=test.index[:len(test_y)])
+    result_df['Actuals'] = test_y['Spot'].values
+    result_df['Predictions'] = forest.predict(test_X)
+    result_df.to_csv(f'ensemble_learning_models/test_results/{filename}',index_label='Date')
+
+def neural_network_metalearner(test,preds,filename):
+    test = test['Spot']
+    #preds = np.array(predictions)
+
+    train_X, train_y = preds[:int(len(preds)/2)], test[:int(len(test)/2)]
+    test_X, test_y = preds[-int(len(preds)/2):], test[-int(len(test)/2):]
+    test = test[int(len(test)/2):]
+    features = train_X.shape[1]
+
+    model = Sequential()
+    model.add(Dense(100,input_shape=(features,),activation='relu'))
+    model.add(Dense(50,activation='relu'))
+    model.add(Dense(10,activation='relu'))
+    model.add(Dense(1))
+    model.compile(loss='mse',optimizer=Adam(lr=1e-3),metrics=['mape'])
+    model.fit(train_X,train_y,batch_size=4,epochs=10,validation_data=(test_X,test_y))
+
+    result_df = pd.DataFrame(index=test.index)
+    result_df['Actuals'] = test
+    result_df['Predictions'] = model.predict(test_X)
+    result_df.to_csv(f'ensemble_learning_models/test_results/{filename}',index_label='Date')
+
+def mean_absolute_percentage_error(true,pred):
+    return np.mean(np.abs((np.array(true) - np.array(pred)) / np.array(true))) * 100
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--filename',type=str,help='Filename of the results')
+    args = parser.parse_args()
+
+    dataset = pd.read_pickle('data/combined_df_stripped.pickle')
+    train, test = dataset[:-(24*10*7)], dataset[-(24*10*7):]
+    #lstm_model = load_model('models/LSTM_encdec_L1L2_datasetcombined_df_stripped.pickle_sequence24-1552984831.h5')
+    sequence_len = 168
+
+    """
+    pred_df2 = pd.DataFrame()
+    count = 0
+    #lstm_model_names = os.listdir('models/')
+    #lstm_model_names = [x for x in lstm_model_names if 'LSTM_encdec_' in x and 'residual' not in x and "sequence24" in x]
+    #lstm_model_names = lstm_model_names[:30]
+    lstm_model_names = ["CNNLSTM_encdec_lossMSE_datasetcombined_df_stripped_swe2_168.pickle_sequence168-1556004737.h5","CNNLSTM_encdec_lossMSE_datasetcombined_df_stripped_swe2_168.pickle_sequence168-1556003430.h5","CNNLSTM_encdec_lossMSE_datasetcombined_df_stripped_swe2_168.pickle_sequence168-1556001883.h5"]
+    for model_name in tqdm(lstm_model_names):
+        dataset_name = model_name.split('dataset')[1].split('.pickle')[0] + '.pickle'
+        dataset = pd.read_pickle(f'data/{dataset_name}')
+        test = dataset[-(24*10*7):]
+        lstm_model = load_model(f'models/{model_name}')
+        ebin = lstm_prediction(test,lstm_model,sequence_len)
+        pred_df2[str(count)] = ebin
+        count += 1
+    pred_df2.to_pickle('ensemble_temp_df_seq168')
+    """
+
+    pred_df = pd.read_pickle("ensemble_temp_df")
+    #pred_df.drop(columns=['AR'],inplace=True)
+    #pred_df = pd.DataFrame()
+    #pred_df['LSTM'] = lstm_prediction(test,lstm_model,sequence_len)
+    #pred_df['AR48'] = ar_prediction(train,test,sequence_len)
+    #pred_df['Prophet'] = prophet_prediction(train,test)
+    #pred_df.to_pickle('ensemble_temp_df')
+
+
+    #pred_df2 = pd.read_pickle("ensemble_temp_df2")
+
+    #pred_df = pd.read_pickle("ensemble_temp_many_lstms")
+    #pred_df = pd.concat([pred_df,pred_df2],axis=1)
+    #pred_df.to_pickle('ensemble_temp_df_seq48')
+
+    pred_df['ARIMA'] = autoarima_prediction(train,test)
+    pred_df.to_pickle("ensemble_temp_df")
+    #pred_df['HW'] = hw_prediction(train,test,sequence_len)
+    #pred_df.to_pickle('ensemble_temp_df_seq168')
+    #pred_df['XGBoost'] = xgboost_prediction(train,test,sequence_len)
+    #pred_df.drop(pred_df.columns[-2:],inplace=True,axis=1)
+    #pred_df.to_pickle("ensemble_temp_df")
+    #print(concat_df.columns)
+    #concat_df.to_pickle('ensemble_temp_df')
+
+    #xgboost_metalearner(test,pred_df,args.filename)
+
+    #r_squared = r2_score(df['Actuals'],df['Predictions'])
+
+
+    if args.mean not None:
+        mean_of_predictions(test,pred_df.values,args.filename)
+    
+    elif args.median not None:
+        median_of_predictions(test,pred_df.values,args.filename)
+
+    elif args.nn not None:
+        neural_network_metalearner(test,pred_df.values,args.filename)
+
+    elif args.rf not None:
+        random_forest_metalearner(test,pred_df.values,args.filename)
+        
+    # TODO: Weighted average https://machinelearningmastery.com/weighted-average-ensemble-for-deep-learning-neural-networks/
+    #weighted_average(test,pred_df.values)
+

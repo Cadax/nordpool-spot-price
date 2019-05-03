@@ -3,7 +3,7 @@
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler, StandardScaler
 from tensorflow.python.keras.models import Sequential, load_model
 from tensorflow.python.keras.layers import Dense, Flatten, CuDNNLSTM, RepeatVector, TimeDistributed, Dropout, BatchNormalization, Bidirectional, LSTM, Conv1D, GlobalAveragePooling1D, MaxPooling1D, Permute, Flatten, Input, PReLU, Concatenate, Activation, Masking, Reshape, GRU
 from tensorflow.python.keras.models import Model
@@ -15,13 +15,16 @@ from tensorflow.python.keras.layers.advanced_activations import *
 from attention import Attention
 import matplotlib.pyplot as plt
 import time
-
+from numpy.random import rand
 import talos as ta
 import argparse
 
+from tensorflow.python.keras import backend as K
 
-def mean_absolute_percentage_error(true,pred):
-    return np.mean(np.abs((np.array(true) - np.array(pred)) / np.array(true))) * 100
+def coeff_determination(y_true, y_pred):
+    SS_res =  K.sum(K.square( y_true-y_pred )) 
+    SS_tot = K.sum(K.square( y_true - K.mean(y_true) ) ) 
+    return ( 1 - SS_res/(SS_tot + K.epsilon()) )
 
 def build_model_attention(train_X, train_y,params):
     timesteps, features, outputs = train_X.shape[1], train_X.shape[2], train_y.shape[1]
@@ -55,7 +58,9 @@ def prepare_data(sequence_len,dataset):
     labelenc = LabelEncoder()
     values[:,variables-1] = labelenc.fit_transform(values[:,variables-1])
     values = values.astype('float64')
-    scaler = MinMaxScaler(feature_range=(-1,1))
+    #scaler = MinMaxScaler(feature_range=(-1,1))
+    scaler = StandardScaler()
+
     #values_nodays = values[:,:-5] # don't normalize binary values
     #print(values_nodays.shape)
     norm_values = scaler.fit_transform(values)
@@ -94,7 +99,8 @@ def make_test(dataset,model_name,sequence_len):
     labelenc = LabelEncoder()
     values[:,variables-1] = labelenc.fit_transform(values[:,variables-1])
     values = values.astype('float64')
-    scaler = MinMaxScaler(feature_range=(-1,1))
+    #scaler = MinMaxScaler(feature_range=(-1,1))
+    scaler = StandardScaler()
     norm_values = scaler.fit_transform(values)
     weeks = int(len(norm_values)/sequence_len)
     rows_to_include = weeks*sequence_len
@@ -150,28 +156,34 @@ def build_model(train_X,train_y,params):
     train_y = train_y.reshape((train_y.shape[0],train_y.shape[1],1))
     val_y = val_y.reshape((val_y.shape[0],val_y.shape[1],1))
 
+    print(train_X[:3,:])
+    print(train_y[:3])
+
+    print(train_X.shape)
+    print(train_y.shape)
     model = Sequential()
-    model.add(CuDNNLSTM(params['first_neurons'],input_shape=(timesteps,features)))
+    model.add(CuDNNLSTM(params['first_neurons'],input_shape=(timesteps,features),name=f'cu_dnnlstm_0_{rand(1)[0]}'))
     #model.add(CuDNNLSTM(params['first_neurons'],input_shape=(timesteps,features)))
-    model.add(RepeatVector(outputs))
+    model.add(RepeatVector(outputs,name=f"repeat_vector_0_{rand(1)[0]}"))
     #model.add(Dropout(0.2))
     # two extra layers
-    """
-    model.add(CuDNNLSTM(params['first_neurons']))
-    model.add(RepeatVector(outputs))
-    model.add(CuDNNLSTM(params['first_neurons']))
-    model.add(RepeatVector(outputs))
-    """
+    model.add(CuDNNLSTM(params['first_neurons'],name=f"cu_dnnlstm_1_{rand(1)[0]}"))
+    model.add(RepeatVector(outputs,name=f"repeat_vector_1_{rand(1)[0]}"))
+    model.add(CuDNNLSTM(params['first_neurons'],name=f"cu_dnnlstm_2_{rand(1)[0]}"))
+    model.add(RepeatVector(outputs,name=f"repeat_vector_2_{rand(1)[0]}"))
     # two extra layers
-    model.add(CuDNNLSTM(params['second_neurons'],return_sequences=True))
+    model.add(CuDNNLSTM(params['second_neurons'],return_sequences=True,name=f"cu_dnnlstm_3_{rand(1)[0]}"))
    # model.add(Dropout(0.2))
-    model.add(TimeDistributed(Dense(params['dense_neurons'],activation='relu')))
-    model.add(TimeDistributed(Dense(1)))
-    model.compile(loss='mse', optimizer=params['optimizer'], metrics=['mse','mae','mape'])
+    model.add(TimeDistributed(Dense(params['dense_neurons'],activation='relu'),name=f"time_distributed_0_{rand(1)[0]}"))
+    model.add(TimeDistributed(Dense(1),name=f"time_distributed_1_{rand(1)[0]}"))
+    
+    model.compile(loss='mae', optimizer=params['optimizer'], metrics=['mse','mape','mae'])
+    
     tensorboard = TensorBoard(log_dir=f"./logs/{int(time.time())}",histogram_freq=0,write_graph=True,write_images=False)
-    early_stopping = EarlyStopping(monitor='val_mean_absolute_percentage_error',mode='min',patience=15)
+    early_stopping = EarlyStopping(monitor='val_mean_absolute_error',mode='min',patience=15)
     checkpoint_name = f'{int(time.time())}.h5'
-    model_checkpoint = ModelCheckpoint(f'./checkpoints/{checkpoint_name}',monitor='val_mean_absolute_percentage_error',mode='min',save_best_only=True,verbose=1)
+    model_checkpoint = ModelCheckpoint(f'./checkpoints/{checkpoint_name}',monitor='val_mean_absolute_error',mode='min',save_best_only=True,verbose=1)
+    print(model.summary())
     model.fit(train_X, 
               train_y, 
               epochs=params['epochs'], 
@@ -194,8 +206,8 @@ def build_model_cnnlstm(train_X,train_y,params):
 
 
     model = Sequential()
-    model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(timesteps,features)))
-    model.add(Conv1D(filters=64, kernel_size=3, activation='relu'))
+    model.add(Conv1D(filters=64, kernel_size=2, activation='relu', input_shape=(timesteps,features)))
+    model.add(Conv1D(filters=64, kernel_size=2, activation='relu'))
     model.add(MaxPooling1D(pool_size=2))
     model.add(Flatten())
     model.add(RepeatVector(outputs))
@@ -203,11 +215,11 @@ def build_model_cnnlstm(train_X,train_y,params):
     model.add(TimeDistributed(Dense(params['dense_neurons'], activation='relu')))
     model.add(TimeDistributed(Dense(1)))
 
-    model.compile(loss='mean_absolute_error', optimizer=params['optimizer'], metrics=['mse','mae','mape'])
+    model.compile(loss='mae', optimizer=params['optimizer'], metrics=['mape','mae'])
     tensorboard = TensorBoard(log_dir=f"./logs/{int(time.time())}",histogram_freq=0,write_graph=True,write_images=False)
-    early_stopping = EarlyStopping(monitor='val_mean_absolute_percentage_error',mode='min',patience=15)
+    early_stopping = EarlyStopping(monitor='val_mean_absolute_error',mode='min',patience=10)
     checkpoint_name = f'{int(time.time())}.h5'
-    model_checkpoint = ModelCheckpoint(f'./checkpoints/{checkpoint_name}',monitor='val_mean_absolute_percentage_error',mode='min',save_best_only=True,verbose=1)
+    model_checkpoint = ModelCheckpoint(f'./checkpoints/{checkpoint_name}',monitor='val_mean_absolute_error',mode='min',save_best_only=True,verbose=1)
     model.fit(train_X, 
               train_y, 
               epochs=params['epochs'], 
@@ -218,7 +230,6 @@ def build_model_cnnlstm(train_X,train_y,params):
               callbacks=[tensorboard,early_stopping,model_checkpoint]
               )
     return model, checkpoint_name
-
 
 def build_model_convlstm(train_X,train_y,params):
     length = 24
@@ -483,152 +494,26 @@ def temp_test():
     #test_df.drop(columns=columns_to_drop,inplace=True)
     test_result_df = make_test(test_df,model_name,sequence_len)
 
-def main(dataset,plot):
+def mean_absolute_percentage_error(true,pred):
+    return np.mean(np.abs((np.array(true) - np.array(pred)) / np.array(true))) * 100
+
+def main(dataset):
     #hours_in, hours_out = 24,24
     #lr = 0.001
     #opt = Adam(lr=lr)
 
     params_list = list()
-    """
     params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24
+    'first_neurons' : 200,
+    'second_neurons' : 200,
+    'dense_neurons' : 100,
+    'lr' : 1e-5,
+    'optimizer' : Adam(lr=1e-5),
+    'epochs' : 100,
+    'batch_size' : 24,
+    'sequence_len' : 24*7
     })
-    params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24*2
-    })
-    params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24*3
-    })
-    params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24*4
-    })
-    params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24*5
-    })
-
-    params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24*6
-    })
-    params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24*7
-    })
-    params_list.append({
-        'first_neurons' : 50,
-        'second_neurons' : 50,
-        'dense_neurons' : 25,
-        'lr' : 0.001,
-        'optimizer' : Adam(lr=0.001),
-        'epochs' : 20,
-        'batch_size' : 8,
-        'sequence_len' : 24*14
-    })
-"""
-
-    params_list.append({
-    'first_neurons' : 50,
-    'second_neurons' : 50,
-    'dense_neurons' : 25,
-    'lr' : 1e-3,
-    'optimizer' : Adam(lr=1e-3),
-    'epochs' : 200,
-    'batch_size' : 8,
-    'sequence_len' : 24
-    })
-
-    params_list.append({
-    'first_neurons' : 50,
-    'second_neurons' : 50,
-    'dense_neurons' : 25,
-    'lr' : 1e-3,
-    'optimizer' : Adam(lr=1e-3),
-    'epochs' : 200,
-    'batch_size' : 12,
-    'sequence_len' : 24
-    })
-
-    params_list.append({
-    'first_neurons' : 50,
-    'second_neurons' : 50,
-    'dense_neurons' : 25,
-    'lr' : 1e-3,
-    'optimizer' : Adam(lr=1e-3),
-    'epochs' : 200,
-    'batch_size' : 4,
-    'sequence_len' : 24
-    })
-
-    """
-    params_list.append({
-    'first_neurons' : 100,
-    'second_neurons' : 100,
-    'dense_neurons' : 50,
-    'lr' : 1e-3,
-    'optimizer' : Adam(lr=1e-3),
-    'epochs' : 200,
-    'batch_size' : 4,
-    'sequence_len' : 24*2
-    })
-
-    params_list.append({
-    'first_neurons' : 100,
-    'second_neurons' : 100,
-    'dense_neurons' : 50,
-    'lr' : 1e-3,
-    'optimizer' : Adam(lr=1e-3),
-    'epochs' : 200,
-    'batch_size' : 4,
-    'sequence_len' : 24*3
-    })
-"""
+    
     """
     params = {
         'first_neurons' : [50,100,200],
@@ -647,7 +532,7 @@ def main(dataset,plot):
         #dataset = 'combined_df_engineered_T-24.pickle' # dataset with almost 200 features
         #dataset = 'combined_df_stripped.pickle' # previous dataset but stripped of features that had no importance according to random forest, len 41
         #dataset = 'combined_df_perm_stripped2.pickle' 
-        combined_df = pd.read_pickle(f'data/{dataset}')
+        combined_df = pd.read_pickle(dataset)
         #combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop onehot encoded values
         #combined_df.drop(columns=['Day','FI-SE3','FI-SE1','FI-NO','Consumption','yhat_lower','trend','^N100 Close','^OMXSPI Close','FORTUM Close','^OMXH25 Close','Hydro Reservoir FI','Wind Power Production FI','Rovaniemi Temperature','Jyvaskyla Temperature','Helsinki Temperature'],inplace=True) #drop features with low importance score
         sequence_len = params['sequence_len'] # sequence length, week is 24 hours * 7 
@@ -656,14 +541,19 @@ def main(dataset,plot):
         print(f"Features in dataset: {len(combined_df.columns)-1}")
         train_X,train_y,scaler = prepare_data(sequence_len,combined_df)
 
-        #model,checkpoint_name = build_model(train_X, train_y,params)
-        model,checkpoint_name = build_model_cnnlstm(train_X,train_y,params)
-        
+        if args.cnn is True:
+            model,checkpoint_name = build_model_cnnlstm(train_X,train_y,params)
+        else:
+            model,checkpoint_name = build_model(train_X, train_y,params)
         #model,checkpoint_name = build_model_lstmfcn(train_X,train_y)
         #model,checkpoint_name = build_model_attn(train_X,train_y,params)
         #model,checkpoint_name = build_model_convlstm(train_X,train_y,params)
 
-        model_path = f"models/LSTM_encdec_lossMSE_dataset{dataset}_sequence{sequence_len}-{int(time.time())}.h5"
+        dataset_name = dataset.split('/')[-1]
+        if args.cnn is True:
+            model_path = f"models/CNNLSTM_encdec_lossMAE_dataset{dataset_name}_sequence{sequence_len}-{int(time.time())}.h5"
+        else:
+            model_path = f"models/LSTM_encdec_lossMAE_dataset{dataset_name}_sequence{sequence_len}-{int(time.time())}.h5"
         model.save(model_path)
         model_name = model_path.split('/')[1]
         #model = load_model('models/LSTM_encoder_decoder_sequence168.h5')
@@ -679,11 +569,12 @@ def main(dataset,plot):
         mape = mean_absolute_percentage_error(test_result_df['Actuals'],test_result_df['Predictions'])
         #rmse, mae, mape = model_results(model,train,test,sequence_len,scaler)
         print(f"RMSE: {rmse}, MAE: {mae}, MAPE: {mape}")
+        """
         if plot is True:
                 fig, axes = plt.subplots(nrows=1, ncols=1,figsize=(16, 6))
                 test_result_df.plot(ax=axes)
                 plt.show(axes)
-        """
+
         t = ta.Scan(x=train_X,
                     y=train_y,
                     model=model,
@@ -707,19 +598,22 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name',type=str,help='Name of the model')
     parser.add_argument('--continue_training',help='Continue training the model, provide the models name with parameter model_name',action='store_true')
-    parser.add_argument('--plot',help='Plot the training results of the model',action='store_true')
     parser.add_argument('--dataset',type=str,help='Name of the dataset to train with')
+    parser.add_argument('--cnn',help='Use the CNN-LSTM model to train',action='store_true')
+    parser.add_argument('--test_model',type=str,help='Test a model by providing the saved models name')
     args = parser.parse_args()
 
     if args.continue_training is True:
         print("Continuing training")
         continue_training(args.model_name)
+    elif args.test_model is not None:
+        combined_df = pd.read_pickle(args.dataset)
+        sequence_len = 24
+        test_df = combined_df[-(24*10*7):]
+        columns_to_drop = [x for x in test_df.columns if 'Spot' and 'T-' in x and int(x.split('-')[1]) < sequence_len]
+        test_df.drop(columns=columns_to_drop,inplace=True)
+        test_result_df = make_test(test_df,args.test_model,sequence_len)
     else:
-        #main(args.dataset,args.plot)
-        main(args.dataset,args.plot)
-        #main('combined_df_stripped_swe3_residual.pickle',args.plot)
-        #main('combined_df_residuals_swe3.pickle',args.plot)
-        #main('combined_df_residuals_swe3_T-72.pickle',args.plot)
-        #main('combined_df_residuals_swe3_T-96.pickle',args.plot)
-
+        #main(args.dataset)
+        main(args.dataset)
         #temp_test()
