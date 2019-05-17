@@ -1,35 +1,14 @@
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.model_selection import RandomizedSearchCV
-from sklearn.model_selection import GridSearchCV
-from sklearn.externals import joblib
-import json
-import fbprophet
+from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+import matplotlib.pyplot as plt
+from rfpimp import importances
+import itertools
 
-
-def train_forest(combined_df):
-    labels = combined_df.values[:,0]
-    features = combined_df.values[:,1:]
-    train_features, test_features, train_labels, test_labels = train_test_split(features,labels,test_size=0.10,shuffle=False)
-    #forest = RandomForestRegressor(n_estimators = 1000, random_state = 42, n_jobs=-1)
-    forest = RandomForestRegressor(n_estimators=600,
-                                   min_samples_split=12,
-                                   min_samples_leaf=5,
-                                   max_features='sqrt',
-                                   max_depth=80,
-                                   bootstrap=False,
-                                   random_state=42,
-                                   n_jobs=-1)
-    forest.fit(train_features, train_labels)
-    preds = forest.predict(test_features)
-    mae = mean_absolute_error(preds,test_labels)
-    rmse = np.sqrt(mean_squared_error(preds,test_labels))
-    print(f"Test MAE: {mae}")
-    print(f"Test RMSE: {rmse}")
-    return forest
+def mean_absolute_percentage_error(true,pred):
+    return np.mean(np.abs((np.array(true) - np.array(pred)) / np.array(true))) * 100
 
 def extra_forest(combined_df):
     labels = combined_df.values[:,0]
@@ -53,112 +32,68 @@ def extra_forest(combined_df):
     return forest
     
 
-def random_forest_random_search(combined_df):
+def random_forest_random_search(train_x,train_y):
     random_grid = {
-    'n_estimators' : [int(x) for x in np.linspace(start=200,stop=2000, num=10)],
+    'n_estimators' : [int(x) for x in np.linspace(start=100,stop=1000, num=11)],
     'max_features' : ['auto','sqrt'],
-    'max_depth' : [int(x) for x in np.linspace(10,110,num=11)] + [None],
+    'max_depth' : [int(x) for x in np.linspace(4,11,num=8)] + [None],
     'min_samples_split' : [2,5,10],
     'min_samples_leaf' : [1,2,4],
     'bootstrap' : [True,False]
     }
-    labels = combined_df.values[:,0]
-    features = combined_df.values[:,1:]
-    train_features, test_features, train_labels, test_labels = train_test_split(features,labels,test_size=0.10,shuffle=False)
     forest = RandomForestRegressor(random_state=42)
     random_search_forest = RandomizedSearchCV(
                                             estimator=forest, 
                                             param_distributions=random_grid,
                                             scoring='neg_mean_absolute_error', 
-                                            n_iter=25,
+                                            n_iter=50,
                                             n_jobs=-1,
                                             cv=2,
                                             verbose=2,
                                             random_state=42,
                                             return_train_score=True)
-    random_search_forest.fit(train_features,train_labels)
-    np.save('rf_random_search_best_params.npy',random_search_forest.best_params_)
-    np.save('rf_random_search_results.npy',random_search_forest.cv_results_)
+    random_search_forest.fit(train_x,train_y)
+    print(random_search_forest.best_params_)
+    np.save('rf_random_search_best_params2.npy',random_search_forest.best_params_)
+    np.save('rf_random_search_results2.npy',random_search_forest.cv_results_)
 
-def random_forest_grid_search(combined_df):
+def random_forest_grid_search(train_x,train_y):
     grid = {
-        'n_estimators' : [500,600,700],
-        'min_samples_split' : [8,10,12],
-        'min_samples_leaf' : [3,4,5],
+        'n_estimators' : [200,300,400],
+        'min_samples_split' : [12],
+        'min_samples_leaf' : [4],
         'max_features' : ['sqrt',None],
-        'max_depth' : [80,90,100],
+        'max_depth' : [10,30,50],
         'bootstrap' : [False]
     }
-    labels = combined_df.values[:,0]
-    features = combined_df.values[:,1:]
-    train_features, test_features, train_labels, test_labels = train_test_split(features,labels,test_size=0.10,shuffle=False)
     forest = RandomForestRegressor(random_state=42)
     grid_search = GridSearchCV(estimator = forest, 
                                param_grid=grid,
-                               cv=3,
+                               cv=2,
                                n_jobs=-1,
                                verbose=2,
                                return_train_score=True)
-    grid_search.fit(train_features,train_labels)
-    np.save('rf_grid_search_best_params.npy',grid_search.best_params_)
-    np.save('rf_grid_search_results.npy',grid_search.cv_results_)
+    grid_search.fit(train_x,train_y)
+    print(grid_search.best_params_)
 
 def list_importances(forest,feature_names):
     importances = list(forest.feature_importances_)
     feature_importances = [(feature,round(importance,2)) for feature, importance in zip(feature_names,importances)]
     feature_importances = sorted(feature_importances, key=lambda x: x[1], reverse = True)
-    [print('Variable: {:20} Importance: {}'.format(*pair)) for pair in feature_importances]
+    feature_importances_df = pd.DataFrame(data=feature_importances,columns=['Feature','Importance Score'])
+    feature_importances_df.set_index('Feature',inplace=True)
+    print(feature_importances_df)
+    ax = feature_importances_df.plot.barh()
+    plt.show(ax)
+    #[print('Variable: {:20} Importance: {}'.format(*pair)) for pair in feature_importances]
 
 def list_permutation_importances(forest,test):
-    from rfpimp import importances
-    import matplotlib.pyplot as plt
-
     test = test[-168*4:]
     permutative_importances = importances(forest,test.drop(columns=['Spot']),test['Spot'])
     #fig, ax = plt.subplots()
     ax = permutative_importances.plot.barh()
+    plt.savefig('../images/permutative_importances.png')
     plt.show(ax)
-    """
-    print(permutative_importances)
-    fig, ax = plt.subplots()
-    y_pos = np.arange(len(permutative_importances))
-    ax.barh(y_pos, permutative_importances['Importance'],align='center',color='green')
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(permutative_importances['Feature'])
-    ax.
-    """
-
-def creating_features(combined_df):
-    """
-    combined_df.drop(columns=['Spot MA','Spot STD','Spot T-168','Spot T-8760','Spot Rolling Min', 'Spot Rolling Max'],inplace=True)
-    combined_df['Spot MA'] = combined_df['Spot'].rolling(window=168,center=False).mean()
-    combined_df['Spot STD'] = combined_df['Spot'].rolling(window=168,center=False).std()
-    combined_df['Spot T-168'] = combined_df['Spot'].shift(168)
-    #combined_df['Spot T-8760'] = combined_df['Spot'].shift(8760)
-    combined_df['Spot Rolling Min'] = combined_df['Spot'].rolling(window=168,center=False).min()
-    combined_df['Spot Rolling Max'] = combined_df['Spot'].rolling(window=168,center=False).max()
-    combined_df['Spot T-336'] = combined_df['Spot'].shift(336)
-    combined_df['Spot T-504'] = combined_df['Spot'].shift(504)
-    combined_df['Weekday'] = combined_df.index.weekday
-    combined_df.dropna(inplace=True)
-    """
-
-    spot = pd.DataFrame(columns=['ds','y'])
-    spot['y'] = combined_df['Spot']
-    spot['ds'] = combined_df.index
-    spot.index = pd.RangeIndex(len(spot.index))
-    prophet = fbprophet.Prophet(changepoint_prior_scale=0.001)
-    prophet.fit(spot)
-    forecast = prophet.make_future_dataframe(periods=0,freq='H')
-    forecast = prophet.predict(forecast)
-    forecast.set_index(['ds'],inplace=True)
-
-    combined_df = pd.concat([combined_df,forecast],axis=1)
-    combined_df.drop(columns=['multiplicative_terms','multiplicative_terms_lower','multiplicative_terms_upper'],inplace=True)
-    combined_df['Spot Expanding Average'] = combined_df['Spot'].expanding().mean()
-    combined_df['Spot Expanding STD'] = combined_df['Spot'].expanding().std()
-    combined_df.dropna(inplace=True)
-    return combined_df
 
 def predict_forest(forest,dataset):
     labels = dataset.values[:,0]
@@ -167,30 +102,46 @@ def predict_forest(forest,dataset):
     mae = mean_absolute_error(predictions,labels)
     return predictions, labels
 
+def forecast_t24():
+    combined_df = pd.read_pickle('data/shifted/combined_df_stripped_swe4_shifted.pickle')
+    t24_df = pd.read_pickle('data/shifted/combined_df_stripped_T24.pickle')
+    columns_to_drop = ['Spot MA T-24','Spot STD T-24','Spot Rolling Min T-24','Spot Rolling Max T-24']
+    combined_df.drop(columns=columns_to_drop,inplace=True)
+    combined_df2 = combined_df['2015-02':'2018-12']
+    columns_to_shift = [x for x in combined_df2.columns if 'Spot' not in x]
+    combined_df2[columns_to_shift] = combined_df2[columns_to_shift].shift(24)
+    combined_df.drop(columns=columns_to_shift,inplace=True)
+    combined_df[columns_to_shift] = combined_df2[columns_to_shift]
+    combined_df['Spot T-168'] = t24_df['Spot T-168']
+    combined_df.dropna(inplace=True)
+    train_x, train_y = combined_df.drop(columns='Spot')[:-(24*10*7)], combined_df['Spot'][:-(24*10*7)]
+    test_x, test_y = combined_df.drop(columns='Spot')[-(24*10*7):], combined_df['Spot'][-(24*10*7):]
+    test_df = pd.DataFrame(index=test_y.index, data={'Actual' : test_y})
 
-if __name__ == '__main__':
-    #combined_df = pd.read_pickle('data/combined_df_engineered_T-24.pickle')
-
-    #combined_df = pd.read_pickle('data/combined_df_stripped_swe3_1718_residual.pickle')
-    combined_df = pd.read_pickle('data/combined_df_residuals_swe2.pickle')
-    #combined_df = combined_df['2018']
-
-    #combined_df = creating_features(combined_df)
-    #combined_df.drop(columns=combined_df.columns[27:76],inplace=True) # drop one hot encoded days etc
-    print(combined_df.columns)
-    feature_names = combined_df.drop('Spot',axis=1).columns
-    forest = train_forest(combined_df)
-    #forest = extra_forest(combined_df)
-    #random_forest_random_search(combined_df)
-    #random_forest_grid_search(combined_df)
-    #best_params = np.load('rf_grid_search_best_params.npy').item()
-    #print(best_params)
-    #print("-------")
-    #results = np.load('rf_grid_search_results.npy').item()
-    #print(results)
-
-    joblib.dump(forest,'models/random_forest/random_forest_resid_swe1.sav')
-    #forest = joblib.load('models/random_forest10.sav')
+    #random_forest_random_search(train_x,train_y)
+    #random_forest_grid_search(train_x,train_y)
     
-    #list_importances(forest,feature_names)
+
+    forest = RandomForestRegressor(n_estimators=200,
+                                   min_samples_split=12,
+                                   min_samples_leaf=4,
+                                   max_features='sqrt',
+                                   max_depth=12,
+                                   bootstrap=False,
+                                   random_state=42,
+                                   n_jobs=-1)
+    forest.fit(train_x, train_y)
+    preds = forest.predict(test_x)
+    mae = mean_absolute_error(preds,test_y)
+    rmse = np.sqrt(mean_squared_error(preds,test_y))
+    mape = mean_absolute_percentage_error(preds,test_y)
+    print(f"Test MAE: {mae}")
+    print(f"Test RMSE: {rmse}")
+    print(f"Test MAPE: {mape}")
+    
+    feature_names = combined_df.drop('Spot',axis=1).columns
+    list_importances(forest,feature_names)
     list_permutation_importances(forest,combined_df)
+    
+if __name__ == '__main__':
+    forecast_t24()

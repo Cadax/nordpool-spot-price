@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+ 
+<head>
+    <style type="text/css">
+        .header{
+            text-align: center;
+            /*
+            background-color: rgb(136, 185, 229);
+            height: 70px;
+            line-height: 70px;*/
+            font-size: 12px
+
+        }
+        .chart{
+            margin-top: 30px;
+            text-align: center;
+        }
+    </style>
+</head>
+ 
+<body>
+    <a href='/'>Back to frontpage</a>
+
+    <h2>Forecasting Models</h2>
+    <form name="modelSelectForm" action="/modelToGraph" method="POST">
+        <select name='modelSelect'>
+            {% for model in models %}
+            <option value= "{{model}}" SELECTED>{{model}}</option>
+            {% endfor %}
+            <input type="submit" value="submit">
+        </select>
+    </form>
+
+    <h2>Ensemble Models</h2>
+    <form name="ensembleModelSelectForm" action="/modelToGraph" method="POST">
+        <select name='ensembleModelSelect'>
+            {% for model in ensemble_models %}
+            <option value= "{{model}}" SELECTED>{{model}}</option>
+            {% endfor %}
+            <input type="submit" value="submit">
+        </select>
+    </form>
+     <!-- D3.js -->
+     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.6/d3.min.js"></script>
+     <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+     <!-- Plotly.js -->
+     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+     
+     <div class="header">
+        <h2>
+            {{model_name}} Forecast Results
+        </h2>
+        <p> Mean Absolute Error: {{mae}} </p>
+        <p> Root Mean Squared Error: {{rmse}} </p>
+        <p> Mean Absolute Percentage Error: {{mape}} </p>
+        <p> R<sup>2</sup> Score: {{r_squared}} </p>
+        <div id="chart" class="chart">  
+
+        </div>
+    </div>
+</body>
+    <script type="text/javascript">
+        var graphs = {{graphJSON | safe}};
+        Plotly.plot('chart',graphs,{});
+    </script>
+</html>

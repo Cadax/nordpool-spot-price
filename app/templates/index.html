@@ -1,0 +1,65 @@
+<html>
+<head>
+    Forecasting Spot Prices
+</head>
+
+<body>
+
+<h2>
+    Forecasting Models
+</h2>
+<form name="modelSelectForm" action="/modelToGraph" method="POST">
+    <select name='modelSelect'>
+        {% for model in models %}
+        <option value= "{{model}}" SELECTED>{{model}}</option>
+        {% endfor %}
+        <input type="submit" value="submit">
+    </select>
+</form>
+
+<h2>Ensemble Models</h2>
+<form name="ensembleModelSelectForm" action="/modelToGraph" method="POST">
+    <select name='ensembleModelSelect'>
+        {% for model in ensemble_models %}
+        <option value= "{{model}}" SELECTED>{{model}}</option>
+        {% endfor %}
+        <input type="submit" value="submit">
+    </select>
+</form>
+
+<h2>
+    Data Analysis
+</h2>
+
+<a href="{{ url_for('da') }}">Data Analysis</a>
+
+<h1>
+    Input your own data / time range
+</h1>
+
+<form name="modelSelection" action="/getModel" method="POST">
+    <div>
+            <input type="radio" id="ar" name="model" value="ar" checked>
+            <label for="ar">Autoregression</label>
+    </div>
+    <div>
+            <input type="radio" id="hw" name="model" value="hw">
+            <label for="hw">Holt-Winters Exponential Smoothing</label>
+    </div>
+    <div>
+        <input type="radio" id="lstm" name="model" value="lstm">
+        <label for="lstm">LSTM Neural Network</label>
+    </div>
+    <div>
+            <input type="radio" id="cnnlstm" name="model" value="cnnlstm">
+            <label for="cnnlstm">CNN-LSTM Neural Network</label>
+    </div>
+    <div>
+        <!--<input type="submit" value="submit"> -->
+    </div>
+</form>
+
+</body>
+
+
+</html>
