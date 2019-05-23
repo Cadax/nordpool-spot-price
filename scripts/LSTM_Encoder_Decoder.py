@@ -13,11 +13,13 @@ from tensorflow.python.keras.callbacks import TensorBoard, EarlyStopping, ModelC
 from tensorflow.python.keras.regularizers import L1L2
 from tensorflow.python.keras.layers.advanced_activations import *
 from tensorflow.python.keras.utils.vis_utils import plot_model
+from decimal import Decimal as D
 from tensorflow.python.keras import backend as K
 import matplotlib.pyplot as plt
 import time
 from numpy.random import rand
 import argparse
+import tensorflow
 
 def mean_absolute_percentage_error(true,pred):
     return np.mean(np.abs((np.array(true) - np.array(pred)) / np.array(true))) * 100
@@ -306,7 +308,7 @@ def main(args):
         'second_neurons' : 1000,
         'dense_neurons' : 1000,
         'lr' : 1e-5,
-        'optimizer' : Adam(lr=1e-5),
+        'optimizer' : 'Adam',
         'epochs' : 5,
         'batch_size' : 168,
         'sequence_len' : 168
@@ -317,28 +319,20 @@ def main(args):
             for line in hparams:
                 split = line.split(':')
                 hparam = split[0].strip()
-                hparams_dict[hparam] = float(split[1].strip())
+                if hparam == 'lr':
+                    hparams_dict[hparam] = D(split[1].strip())
+                elif hparam == 'optimizer':
+                    hparams_dict[hparam] = str(split[1].strip())
+                else:
+                    hparams_dict[hparam] = int(split[1].strip())
         params_list.append(hparams_dict)
         
-    """
-    params = {
-        'first_neurons' : [50,100,200],
-        'second_neurons' : [50,100,200],
-        'dense_neurons' : [25,50,100],
-        'lr' : [1e-3, 1e-4, 1e-5], 
-        'optimizer' : ['adam'],
-        'epochs' : [25,50],
-        'batch_size' : [1,6,12,18],
-        'kernel_initializer' : ['uniform',L1L2(l1=0.01,l2=0.01)],
-        'sequence_len' : [24],
-        'dropout' : [0.0,0.1,0.2]
-    }
-    """
     for params in params_list:
-        #dataset = 'combined_df_engineered_T-24.pickle' # dataset with almost 200 features
-        #dataset = 'combined_df_stripped.pickle' # previous dataset but stripped of features that had no importance according to random forest, len 41
+        # initialize optimizer from params
+        params['optimizer'] = tensorflow.keras.optimizers.get(params['optimizer'].lower())
+        K.set_value(params['optimizer'].lr, params['lr'])
         combined_df = pd.read_pickle(args.dataset)
-        sequence_len = params['sequence_len']
+        sequence_len = int(params['sequence_len'])
         columns_to_drop = [x for x in combined_df.columns if 'Spot' and 'T-' in x and int(x.split('-')[1]) < sequence_len]
         combined_df.drop(columns=columns_to_drop,inplace=True)
         print(f"Features in dataset: {len(combined_df.columns)-1}")

@@ -1,0 +1,8 @@
+first_neurons : 200
+second_neurons : 200
+dense_neurons : 100
+lr : 0.00001
+optimizer : Adam
+epochs : 100
+batch_size : 12
+sequence_len : 36
