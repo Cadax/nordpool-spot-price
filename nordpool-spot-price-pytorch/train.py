@@ -1,18 +1,19 @@
 from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
-import classes
+from models import CNN, CNNLSTM
 import pandas as pd
-import CNN
+from utils import SpotPriceDataset
 
 df = pd.read_pickle('dataset.pickle')
-variables = len(df.columns)
-dataset = classes.SpotPriceDataset(df,24)
+sequence_len, target = 24, 0
+dataset = SpotPriceDataset(df,sequence_len,target)
+dataset.prepare_data()
 dataloader = DataLoader(dataset, batch_size=2**4, num_workers=0)
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 print(f"Device: {device}")
 
-model = CNN.Model(variables)
+model = CNNLSTM(dataset.variables,sequence_len)
 model.to(device)
 
 criterion = nn.MSELoss()
@@ -24,7 +25,7 @@ for epoch  in range(epochs):
         input_seq, target_seq = batch
         print(input_seq.shape,target_seq.shape)
         input_seq = input_seq.to(device)
-        output, hidden = model(input_seq)
+        output = model(input_seq)
         loss = criterion(output, target_seq.view(-1).long())
         opt.zero_grad()
         loss.backward()
